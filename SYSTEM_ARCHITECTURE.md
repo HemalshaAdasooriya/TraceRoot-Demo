@@ -141,43 +141,7 @@ graph TB
     MarketplaceService --> MapsService
 ```
 
-### 2.2 Append-Only Cultivation Ledger Data Model Flow
 
-```mermaid
-sequenceDiagram
-    autonumber
-    actor Farmer as Farmer (Mobile Client)
-    participant Outbox as Local SQLite / Outbox
-    participant API as TraceRoot API Gateway
-    participant Ledger as Cultivation Service
-    participant Storage as Object Storage (S3)
-    participant DB as PostgreSQL (Append-Only)
-    actor Buyer as Buyer / Supermarket
-
-    Farmer->>Farmer: Open Live Camera (In-App Only)
-    Note over Farmer: Capture live crop photo with GPS & UTC
-    Farmer->>Outbox: Save stage entry locally (Offline safe)
-    Outbox->>API: Push sync batch (POST /api/v1/cultivation/entries)
-    API->>Storage: Store image binary via presigned payload
-    Storage-->>API: Return secure Image URL & SHA-256 hash
-    API->>Ledger: Validate stage sequence & coordinates
-    Ledger->>DB: INSERT INTO cultivation_records (Immutable)
-    Note over DB: Database Trigger strictly forbids<br/>UPDATE or DELETE on this table
-    DB-->>Ledger: Persisted with Record ID & Hash
-    Ledger-->>Farmer: Acknowledge sync successful
-
-    alt Data Correction Needed
-        Farmer->>API: POST /api/v1/cultivation/amendments (Original Record ID + Correction Reason)
-        API->>DB: INSERT INTO cultivation_amendments (Linked to Original Record)
-        Note over DB: Original record remains unchanged;<br/>Amendment is appended and displayed chronologically
-    end
-
-    Buyer->>API: GET /api/v1/crops/{cropId}/cultivation-history
-    API->>DB: Fetch complete immutable timeline + amendments
-    DB-->>Buyer: Verified origin certificate & stage-by-stage media
-```
-
----
 
 ## 3. Component Breakdown
 
