@@ -36,7 +36,7 @@ TraceRoot adopts a **Modular Layered Architecture** (Clean Architecture principl
                                         |
 +---------------------------------------v---------------------------------------+
 |                         Persistence & Infrastructure                          |
-|  [ PostgreSQL (Append-Only Enforced) ]  [ S3 / Object Store ]  [ Redis Cache ]|
+|  [ Supabase (PostgreSQL 16 + Supavisor) ]  [ Supabase Storage / S3 ]  [ Redis Cache ]|
 +-------------------------------------------------------------------------------+
 ```
 
@@ -44,7 +44,7 @@ TraceRoot adopts a **Modular Layered Architecture** (Clean Architecture principl
 
 1. **Tamper-Resistant Append-Only Ledger**: Cultivation events (sowing, chemical inputs, soil conditioning, irrigation, harvest) are immutable once committed. Erroneous entries cannot be mutated or deleted; they are amended through linked reversal/adjustment entries preserving a complete audit trail.
 2. **Zero-Trust Evidence Capture**: Mobile evidence (crop photos) must be taken live within the custom camera interface. Gallery image selection is strictly blocked at the native SDK level to prevent historical or synthetic photo reuse. Automatic device GPS, network geolocation, and UTC timestamps are embedded and verified server-side.
-3. **Offline-First Synchronization**: Farmers operating in field conditions can log activities seamlessly without active connectivity. Data is stored in a structured local SQLite database and queued in an idempotent outbox, auto-syncing upon network restoration.
+3. **Offline-First Synchronization**: Farmers operating in field conditions can log activities seamlessly without active connectivity. Data is queued locally in an idempotent offline client store (AsyncStorage / MMKV) and synchronized to the central PostgreSQL database upon network restoration.
 4. **Role-Based Segregation of Duties**: Strict access boundaries separate Farmers, Buyers, Agro Suppliers, and Platform Administrators, protecting sensitive business contracts, pricing terms, and farmer location privacy.
 
 ---
@@ -57,7 +57,7 @@ TraceRoot adopts a **Modular Layered Architecture** (Clean Architecture principl
 graph TB
     subgraph Presentation_Layer["Presentation Layer (Client Tier)"]
         direction TB
-        FarmerApp["Farmer Mobile App<br/>(React Native / Android)<br/>- Live Camera Enforcer<br/>- Offline SQLite & Outbox"]
+        FarmerApp["Farmer Mobile App<br/>(React Native / Android)<br/>- Live Camera Enforcer<br/>- Offline Local Cache & Outbox"]
         BuyerApp["Buyer Mobile App<br/>(React Native / Cross-Platform)<br/>- Farming-Type Filter<br/>- Provenance Viewer"]
         SupplierApp["Supplier Mobile View<br/>(React Native)<br/>- Input Catalog<br/>- Buyback Pipeline"]
         AdminWeb["Admin Web Dashboard<br/>(React / Next.js Web)<br/>- Verification & KYC<br/>- System Audit & Reports"]
@@ -82,8 +82,8 @@ graph TB
 
     subgraph Persistence_Layer["Data & Persistence Tier"]
         direction TB
-        DB[(PostgreSQL 16 Database<br/>- Users, Farms, Crops<br/>- Orders, Contracts, Catalog<br/>- Immutable Append-Only Logs<br/>- Trigger-Level DELETE Block)]
-        CloudStorage["Cloud Object Storage (AWS S3 / R2)<br/>- Cultivation Evidence Photos<br/>- Harvest Photos & Thumbnails<br/>- Pre-Signed Upload URLs"]
+        DB[(Supabase Managed PostgreSQL 16<br/>- Strict ACID Relational Engine<br/>- Supavisor Connection Pooling<br/>- PostGIS Spatial Boundary Checking<br/>- JSONB Dynamic Stage Form Payloads<br/>- PL/pgSQL Append-Only Triggers)]
+        CloudStorage["Cloud Object Storage (Supabase Storage / AWS S3)<br/>- Cultivation Evidence Photos<br/>- Harvest Photos & Thumbnails<br/>- Pre-Signed Upload URLs"]
         RedisCache[("Redis In-Memory Cache<br/>- Session Revocation List<br/>- API Rate Limiter Counters<br/>- Geo-Spatial Search Cache")]
         SyncQueue["Background Job / Message Queue<br/>- Offline Sync Worker<br/>- Notification Worker<br/>- Image Thumbnail Processor"]
     end
@@ -152,7 +152,7 @@ graph TB
   - **Supplier Module**: Catalog management, price and inventory updating, and harvest buyback fulfillment.
 - **Key Client-Side Subcomponents**:
   - `LiveCameraCaptureModule`: Directly binds to hardware camera; blocks gallery picker; extracts native GPS coordinates and hardware timestamp.
-  - `OfflineSyncManager`: Maintains a local SQLite cache and persistent outbox queue with exponential backoff and network status listeners (`@react-native-community/netinfo`).
+  - `OfflineSyncManager`: Maintains a persistent local outbox queue and offline cache (AsyncStorage / MMKV) with exponential backoff and network status listeners (`@react-native-community/netinfo`).
   - `RoleBasedUIController`: Dynamically configures screens, navigation stacks, and actions according to user role permissions.
 - **Design Patterns**: 
   - **Offline Outbox Pattern**: Queues offline mutations in local storage; executes idempotent replays when connection is active.
@@ -256,13 +256,13 @@ graph TB
 | Layer / Concern | Selected Technology | Version / Specification | Rationale & Justification |
 | :--- | :--- | :--- | :--- |
 | **Mobile Client** | **React Native (with Expo bare workflow)** | React Native 0.74+ / Expo SDK 51+ | Single, maintainable cross-platform codebase (Android & iOS). Native access to camera and GPS hardware modules. Extensive open-source ecosystem ideal for agile student engineering teams. |
-| **Local Offline Storage** | **SQLite via OP-SQLite / WatermelonDB** | Embedded SQLite 3 | Zero-latency local queries, high performance on low-end Android hardware, and native support for offline-first transactional outbox patterns. |
+| **Local Offline Storage & Outbox** | **AsyncStorage / MMKV** | MMKV v2+ / React Native AsyncStorage | Ultra-fast, zero-overhead key-value client storage for queuing pending offline stage entries and caching recent queries before syncing to the cloud PostgreSQL database. |
 | **Admin Web Portal** | **Next.js (App Router) & React** | React 18+ / Next.js 14+ | Server-side rendering (SSR) for fast dashboard initial load, type safety, responsive desktop grid layouts, and seamless integration with REST APIs. |
 | **UI Components (Web)** | **Tailwind CSS & Shadcn UI** | Tailwind v3.4+ / Radix Primitives | Clean, accessible, modern UI component primitives allowing rapid development of data tables, modals, and verification cards. |
 | **Backend Runtime & Framework** | **Node.js with Express.js / NestJS (TypeScript)** | Node.js 20 LTS, TypeScript 5.x | Highly scalable asynchronous I/O model for concurrent mobile API requests. TypeScript provides strict compile-time type safety across domain models, DTOs, and database entities. |
-| **Relational Database** | **PostgreSQL** | PostgreSQL 16+ | Industry standard for relational integrity and ACID compliance. Offers native `JSONB` support for dynamic stage-based forms, `PostGIS` extension for farm boundary/geo-distance queries, and table-level SQL triggers to enforce immutable append-only constraints. |
-| **Database ORM / Query Layer** | **Prisma ORM** | Prisma 5.x | Type-safe database client with declarative schema migrations, automated TypeScript type generation, and robust transaction support (`prisma.$transaction`). |
-| **Media & Object Storage** | **AWS S3 / Cloudflare R2 / MinIO** | S3-Compatible API | Secure, scalable storage for live-captured cultivation photos and verification documents. Uploads bypass the API server via direct pre-signed URLs, preventing server bandwidth bottlenecks. |
+| **Relational Database & Cloud Hosting** | **Supabase (Managed PostgreSQL 16)** | PostgreSQL 16+ / Supabase Cloud Platform | Managed cloud PostgreSQL infrastructure with automated zero-downtime scaling, Supavisor connection pooling for high-concurrency mobile I/O, point-in-time recovery (PITR), native `JSONB` for agronomic inputs, `PostGIS` spatial extension for farm geo-fencing, and PL/pgSQL database triggers for append-only audit integrity. |
+| **Database ORM & Migration Engine** | **Prisma ORM (with Supabase Dual-URL Pooling)** | Prisma 5.x | Type-safe ORM leveraging Supabase's dual-connection model: pooled connection (`DATABASE_URL` via Supavisor port 6543) for runtime API traffic and direct connection (`DIRECT_URL` port 5432) for deterministic schema migrations (`prisma migrate dev`). |
+| **Media & Object Storage** | **Supabase Storage (with S3 Interoperability)** | Supabase Storage API / AWS S3 SDK | High-performance, CDN-backed object storage for live-captured cultivation photos and KYC identity documents. Generates time-limited pre-signed upload URLs allowing mobile clients to upload directly without bottlenecking the backend Express server. |
 | **Caching & Message Queue** | **Redis** | Redis 7.x | In-memory key-value store for session token revocation lists, distributed API rate limiting, and BullMQ background task queuing (offline batch processing, push notifications). |
 | **Authentication** | **JWT (JSON Web Tokens) with Argon2id** | RFC 7519 / Argon2id password hashing | Stateless authentication suited for mobile clients. Access tokens have short TTL (15 mins) paired with rotating refresh tokens stored securely in native mobile keychain (`expo-secure-store`). |
 | **Push Notifications** | **Firebase Cloud Messaging (FCM)** | Google FCM v1 HTTP API | Reliable cross-platform push notification delivery to Android and iOS devices for contract updates, order status, and buyer inquiry alerts. |
@@ -286,7 +286,7 @@ graph TB
        ▼ (Check Connectivity)
    ┌───┴────────────────────────┐
    ▼ (Offline)                  ▼ (Online)
-[Save to SQLite Outbox]    [Request Pre-signed S3 Upload URL]
+[Save to Local Outbox]    [Request Pre-signed S3 Upload URL]
    │                            │
    │ (On Network Reconnect)     ├─► 5. Binary upload direct to Object Storage (S3)
    └───────────────────────────►├─► 6. Submit POST /api/v1/cultivation/entries
@@ -473,6 +473,100 @@ erDiagram
 - `status`: ENUM (`PROPOSED`, `NEGOTIATION`, `ACTIVE`, `FULFILLED`, `DISPUTED`, `CANCELLED`) DEFAULT `PROPOSED`
 - `created_at`: TIMESTAMPTZ DEFAULT NOW()
 
+### 6.3 PostgreSQL Specific Architectural Advantages over SQLite
+
+TraceRoot deliberately utilizes **PostgreSQL 16+** as its primary relational database rather than an embedded database like SQLite for the following architectural necessities:
+
+1. **High-Concurrency Multi-User Transactions**:
+   - SQLite operates with database-level write locks, which causes high transaction latency and "database locked" errors when concurrent mobile clients, web administrators, and automated background workers write simultaneously.
+   - PostgreSQL leverages **Multi-Version Concurrency Control (MVCC)** with row-level locking. Multiple farmers can commit stage records, buyers can reserve order quantities, and administrators can verify accounts simultaneously without lock contention.
+2. **Native JSONB & GIN Inverted Indexing**:
+   - SQLite's JSON support stores JSON as plain text strings, requiring parsing on every query.
+   - PostgreSQL parses and validates JSON into decomposed binary format (`JSONB`), enabling high-performance deep filtering and **GIN (Generalized Inverted Index)** indexing over dynamic agronomic data (e.g. fertilizer brands, chemical active ingredients, and climatic metrics).
+3. **Database-Level Procedural Enforcement (PL/pgSQL Triggers)**:
+   - While SQLite supports basic SQL triggers, it cannot execute procedural logic, raise customized error codes with rollback semantics, or dynamically inspect execution context like PostgreSQL's `PL/pgSQL`.
+   - In TraceRoot, the immutable cultivation ledger relies on PostgreSQL `PL/pgSQL` triggers to definitively block `UPDATE` and `DELETE` commands at the kernel database level.
+4. **Spatial Capabilities (PostGIS Integration)**:
+   - TraceRoot verifies live crop capture coordinates against declared farm boundaries. PostgreSQL with **PostGIS** provides industry-standard spatial functions (`ST_Contains`, `ST_DWithin`, `ST_GeomFromText`) for polygon boundary checking, which is unavailable in standard SQLite.
+5. **Connection Pooling & Production Clustering**:
+   - PostgreSQL integrates seamlessly with connection poolers (pgBouncer, Prisma Connection Pool) and cloud-managed read-replicas (AWS Aurora, Supabase, Neon), allowing the system to scale smoothly from student prototype to national agricultural deployment.
+
+### 6.4 PostgreSQL Indexing & Optimization Strategy
+
+To ensure sub-second response times across the mobile and web clients, the following indexes are defined in the PostgreSQL database:
+
+```sql
+-- 1. Cultivation History Chronological Feed Index
+CREATE INDEX idx_cultivation_records_crop_stage 
+ON cultivation_records (crop_id, stage_sequence ASC);
+
+-- 2. GIN Inverted Index for Dynamic Stage Input Queries
+CREATE INDEX idx_cultivation_input_details_gin 
+ON cultivation_records USING GIN (input_details);
+
+-- 3. Marketplace Listing Fast-Filter Index
+CREATE INDEX idx_product_listings_filter 
+ON product_listings (farming_type, status, created_at DESC);
+
+-- 4. Contract Dashboard Lookups
+CREATE INDEX idx_contracts_buyer_status ON contracts (buyer_id, status);
+CREATE INDEX idx_contracts_farmer_status ON contracts (farmer_id, status);
+
+-- 5. User Authentication & Profile Lookups
+CREATE UNIQUE INDEX idx_users_email_lower ON users (LOWER(email));
+CREATE UNIQUE INDEX idx_users_phone ON users (phone);
+```
+
+### 6.5 Supabase Managed Cloud Hosting & Dual-Connection Architecture
+
+TraceRoot leverages **Supabase** for its managed PostgreSQL 16 cloud infrastructure. This hosting model introduces specific architectural features and connection optimizations:
+
+```
++─────────────────────────────────────────────────────────────────────────────+
+|                         TraceRoot Backend Services                          |
+|                                                                             |
+|   [ Express.js REST API ]                     [ Prisma CLI Migrations ]     |
+|   (Runtime Client Traffic)                    (Development & CI/CD Pipeline)|
++─────────────────────┬───────────────────────────────────────┬───────────────+
+                      │ DATABASE_URL                          │ DIRECT_URL
+                      │ (Port 6543, PgBouncer Mode)           │ (Port 5432, Session Mode)
+                      ▼                                       ▼
++─────────────────────────────────────────────────────────────────────────────+
+|                     Supabase Cloud Infrastructure (AWS)                     |
+|                                                                             |
+|      +─────────────────────────+             +────────────────────────+     |
+|      |   Supavisor Pooler      |             |   Direct PostgreSQL    |     |
+|      |   (Port 6543)           |             |   (Port 5432)          |     |
+|      +────────────┬────────────+             +───────────┬────────────+     |
+|                   │                                      │                  |
+|                   └──────────────────┬───────────────────┘                  |
+|                                      ▼                                      |
+|                 +─────────────────────────────────────────+                 |
+|                 |     PostgreSQL 16 Engine Instance       |                 |
+|                 |  - PostGIS Spatial Extension            |                 |
+|                 |  - JSONB Dynamic Stage Form Support     |                 |
+|                 |  - PL/pgSQL Append-Only Triggers        |                 |
+|                 |  - Automated WAL Archiving & Backups    |                 |
+|                 +─────────────────────────────────────────+                 |
+|                                                                             |
+|                 +─────────────────────────────────────────+                 |
+|                 |     Supabase Storage CDN Bucket         |                 |
+|                 |  - Live-Captured Crop Evidence Media    |                 |
+|                 |  - Pre-Signed Upload & Download URLs    |                 |
+|                 +─────────────────────────────────────────+                 |
++─────────────────────────────────────────────────────────────────────────────+
+```
+
+1. **Dual-Connection Pooling Model**:
+   - **Pooled URL (`DATABASE_URL`, Port 6543)**: Connects through **Supavisor** (Supabase's connection pooler) in transaction mode with `?pgbouncer=true`. Express API worker threads share pooled database connections, preventing connection exhaustion under burst mobile traffic from hundreds of farmers and buyers.
+   - **Direct URL (`DIRECT_URL`, Port 5432)**: Connects directly to the PostgreSQL database instance. Essential for Prisma CLI operations (`prisma migrate dev`, `prisma db push`) that require advisory locks and non-pooled session state.
+2. **PostGIS Extension Support**:
+   - Supabase enables the **PostGIS** extension natively (`CREATE EXTENSION IF NOT EXISTS postgis;`), allowing spatial SQL functions (`ST_Contains`, `ST_DWithin`) to validate that live camera submissions match the farmer's registered plot boundary.
+3. **High-Availability & Backup SLAs**:
+   - Managed cloud hosting eliminates on-premises database maintenance, offering automated daily snapshots, write-ahead log (WAL) archiving, point-in-time recovery (PITR), and instant vertical scaling.
+4. **Media Storage Consolidation**:
+   - Alongside PostgreSQL, Supabase provides S3-interoperable object storage (`Supabase Storage`) with built-in CDN distribution for cultivation photos, simplifying infrastructure and reducing external vendor dependencies.
+
 ---
 
 ## 7. Security, Privacy & Integrity Architecture
@@ -526,7 +620,7 @@ Rural farming locations in Sri Lanka frequently experience dead zones or edge-ra
 |  [ User Logs Stage Activity ]                               |
 |               │                                             |
 |               ▼                                             |
-|  [ Write to Local SQLite: `pending_sync_queue` ]             |
+|  [ Write to Local Outbox Store: `pending_sync_queue` ]       |
 |  [ Store Full-Resolution Image in App Sandbox Storage ]     |
 |               │                                             |
 |               ▼                                             |
@@ -561,8 +655,8 @@ Because cultivation entries are strictly **append-only timestamped events**, con
 | Phase | Milestone | Core Deliverables | Target Timeline |
 | :--- | :--- | :--- | :--- |
 | **Phase 1** | Requirements & Architecture Sign-Off | System Architecture Document, ERD, Schema Migrations, API Specifications. | Weeks 1 - 2 |
-| **Phase 2** | Foundation & Core Services | PostgreSQL Schema Setup, Prisma ORM, Auth Service with JWT/Argon2id, API Gateway. | Weeks 3 - 4 |
-| **Phase 3** | Farmer & Cultivation Ledger | React Native Camera integration (no gallery), offline SQLite outbox, append-only trigger enforcement, stage data entry. | Weeks 5 - 8 |
+| **Phase 2** | Foundation & Core Services | Supabase Project Setup, PostgreSQL 16 Schema Setup, Prisma ORM (Dual-URL Pooling), Auth Service with JWT/Argon2id, API Gateway. | Weeks 3 - 4 |
+| **Phase 3** | Farmer & Cultivation Ledger | React Native Camera integration (no gallery), offline outbox queue, PostgreSQL append-only trigger enforcement, stage data entry. | Weeks 5 - 8 |
 | **Phase 4** | Buyer Marketplace & Supplier Engine | Marketplace search & filter (Greenhouse vs. Open-field), provenance viewer, supplier catalog & buyback flow, contract farming state machine. | Weeks 9 - 10 |
 | **Phase 5** | Admin Dashboard & Integration | Next.js admin verification dashboard, FCM push notification service, end-to-end integration across all 4 roles. | Weeks 11 - 12 |
 | **Phase 6** | Quality Assurance & Field Testing | Unit/Integration testing, physical Android device field testing in low-connectivity areas, security audits. | Weeks 13 - 14 |

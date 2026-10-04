@@ -1,0 +1,338 @@
+// TraceRoot - Prisma Schema for Supabase Managed PostgreSQL
+// Farm-to-Buyer Agricultural Contact and Transparency System
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+enum Role {
+  FARMER
+  BUYER
+  SUPPLIER
+  ADMIN
+}
+
+enum VerificationStatus {
+  PENDING
+  VERIFIED
+  REJECTED
+}
+
+enum FarmingType {
+  GREENHOUSE
+  OPEN_FIELD_NORMAL
+}
+
+enum CropStatus {
+  PLANNED
+  ACTIVE
+  HARVESTED
+  TERMINATED
+}
+
+enum OrderStatus {
+  PENDING
+  CONFIRMED
+  DISPATCHED
+  COMPLETED
+  CANCELLED
+}
+
+enum ContractStatus {
+  PROPOSED
+  NEGOTIATION
+  ACTIVE
+  FULFILLED
+  DISPUTED
+  CANCELLED
+}
+
+enum ListingStatus {
+  AVAILABLE
+  RESERVED
+  SOLD_OUT
+  INACTIVE
+}
+
+// -------------------------------------------------------------
+// USER & ROLE ENTITIES
+// -------------------------------------------------------------
+
+model User {
+  id                 String             @id @default(uuid()) @db.Uuid
+  name               String             @db.VarChar(150)
+  email              String             @unique @db.VarChar(255)
+  phone              String             @unique @db.VarChar(20)
+  passwordHash       String             @map("password_hash") @db.VarChar(255)
+  role               Role
+  verificationStatus VerificationStatus @default(PENDING) @map("verification_status")
+  createdAt          DateTime           @default(now()) @map("created_at") @db.Timestamptz()
+  updatedAt          DateTime           @updatedAt @map("updated_at") @db.Timestamptz()
+
+  // Role extensions
+  farmer   Farmer?
+  buyer    Buyer?
+  supplier Supplier?
+  admin    Admin?
+
+  // Relations
+  amendmentsSubmitted CultivationAmendment[]
+  contractsAsBuyer    Contract[]             @relation("BuyerContracts")
+  orders              ProductOrder[]
+  auditLogs           AuditLog[]
+
+  @@map("users")
+}
+
+model Farmer {
+  id            String      @id @db.Uuid
+  user          User        @relation(fields: [id], references: [id], onDelete: Cascade)
+  farmName      String      @map("farm_name") @db.VarChar(200)
+  farmingType   FarmingType @map("farming_type")
+  district      String      @db.VarChar(100)
+  farmLatitude  Decimal     @map("farm_latitude") @db.Decimal(10, 7)
+  farmLongitude Decimal     @map("farm_longitude") @db.Decimal(10, 7)
+  farmSizeAcres Decimal     @map("farm_size_acres") @db.Decimal(6, 2)
+
+  crops          Crop[]
+  contracts      Contract[]      @relation("FarmerContracts")
+  inputPurchases InputPurchase[]
+
+  @@map("farmers")
+}
+
+model Buyer {
+  id                String  @id @db.Uuid
+  user              User    @relation(fields: [id], references: [id], onDelete: Cascade)
+  companyName       String? @map("company_name") @db.VarChar(200)
+  businessRegNumber String? @map("business_reg_number") @db.VarChar(100)
+
+  @@map("buyers")
+}
+
+model Supplier {
+  id            String  @id @db.Uuid
+  user          User    @relation(fields: [id], references: [id], onDelete: Cascade)
+  businessName  String  @map("business_name") @db.VarChar(200)
+  licenseNumber String? @map("license_number") @db.VarChar(100)
+
+  rawMaterials  RawMaterial[]
+  buybackOrders BuybackOrder[]
+
+  @@map("suppliers")
+}
+
+model Admin {
+  id         String  @id @db.Uuid
+  user       User    @relation(fields: [id], references: [id], onDelete: Cascade)
+  department String? @db.VarChar(100)
+
+  @@map("admins")
+}
+
+// -------------------------------------------------------------
+// CROP & CULTIVATION IMMUTABLE LEDGER
+// -------------------------------------------------------------
+
+model Crop {
+  id                 String      @id @default(uuid()) @db.Uuid
+  farmerId           String      @map("farmer_id") @db.Uuid
+  farmer             Farmer      @relation(fields: [farmerId], references: [id], onDelete: Cascade)
+  cropName           String      @map("crop_name") @db.VarChar(100)
+  variety            String?     @db.VarChar(100)
+  farmingType        FarmingType @map("farming_type")
+  plantingDate       DateTime    @map("planting_date") @db.Date
+  expectedHarvestDate DateTime?  @map("expected_harvest_date") @db.Date
+  status             CropStatus  @default(ACTIVE)
+  contractId         String?     @map("contract_id") @db.Uuid
+  contract           Contract?   @relation(fields: [contractId], references: [id])
+  createdAt          DateTime    @default(now()) @map("created_at") @db.Timestamptz()
+
+  cultivationRecords CultivationRecord[]
+  harvests           Harvest[]
+
+  @@map("crops")
+}
+
+// Strict Append-Only Model enforced by PostgreSQL trigger
+model CultivationRecord {
+  id                      String   @id @default(uuid()) @db.Uuid
+  cropId                  String   @map("crop_id") @db.Uuid
+  crop                    Crop     @relation(fields: [cropId], references: [id], onDelete: Cascade)
+  stageSequence           Int      @map("stage_sequence")
+  stageName               String   @map("stage_name") @db.VarChar(100)
+  inputDetails            Json     @map("input_details")
+  environmentalConditions Json?    @map("environmental_conditions")
+  imageUrl                String   @map("image_url") @db.VarChar(500)
+  imageSha256             String   @map("image_sha256") @db.VarChar(64)
+  captureLatitude         Decimal  @map("capture_latitude") @db.Decimal(10, 7)
+  captureLongitude        Decimal  @map("capture_longitude") @db.Decimal(10, 7)
+  deviceTimestamp         DateTime @map("device_timestamp") @db.Timestamptz()
+  serverRecordedAt        DateTime @default(now()) @map("server_recorded_at") @db.Timestamptz()
+
+  amendments CultivationAmendment[]
+
+  @@index([cropId, stageSequence(sort: Asc)], map: "idx_cultivation_records_crop_stage")
+  @@map("cultivation_records")
+}
+
+model CultivationAmendment {
+  id               String            @id @default(uuid()) @db.Uuid
+  originalRecordId String            @map("original_record_id") @db.Uuid
+  originalRecord   CultivationRecord @relation(fields: [originalRecordId], references: [id], onDelete: Cascade)
+  correctionReason String            @map("correction_reason") @db.Text
+  amendedData      Json              @map("amended_data")
+  submittedBy      String            @map("submitted_by") @db.Uuid
+  submitter        User              @relation(fields: [submittedBy], references: [id])
+  createdAt        DateTime          @default(now()) @map("created_at") @db.Timestamptz()
+
+  @@map("cultivation_amendments")
+}
+
+// -------------------------------------------------------------
+// HARVEST, MARKETPLACE & ORDERS
+// -------------------------------------------------------------
+
+model Harvest {
+  id           String   @id @default(uuid()) @db.Uuid
+  cropId       String   @map("crop_id") @db.Uuid
+  crop         Crop     @relation(fields: [cropId], references: [id], onDelete: Cascade)
+  batchNumber  String   @unique @map("batch_number") @db.VarChar(50)
+  harvestDate  DateTime @map("harvest_date") @db.Date
+  quantityKg   Decimal  @map("quantity_kg") @db.Decimal(10, 2)
+  qualityGrade String   @map("quality_grade") @db.VarChar(20)
+  createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz()
+
+  listings      ProductListing[]
+  buybackOrders BuybackOrder[]
+
+  @@map("harvests")
+}
+
+model ProductListing {
+  id                  String        @id @default(uuid()) @db.Uuid
+  harvestId           String        @map("harvest_id") @db.Uuid
+  harvest             Harvest       @relation(fields: [harvestId], references: [id], onDelete: Cascade)
+  cropName            String        @map("crop_name") @db.VarChar(100)
+  farmingType         FarmingType   @map("farming_type")
+  availableQuantityKg Decimal       @map("available_quantity_kg") @db.Decimal(10, 2)
+  pricePerKg          Decimal       @map("price_per_kg") @db.Decimal(10, 2)
+  district            String        @db.VarChar(100)
+  status              ListingStatus @default(AVAILABLE)
+  createdAt           DateTime      @default(now()) @map("created_at") @db.Timestamptz()
+
+  orders ProductOrder[]
+
+  @@index([farmingType, status, createdAt(sort: Desc)], map: "idx_product_listings_filter")
+  @@map("product_listings")
+}
+
+model ProductOrder {
+  id          String      @id @default(uuid()) @db.Uuid
+  listingId   String      @map("listing_id") @db.Uuid
+  listing     ProductListing @relation(fields: [listingId], references: [id])
+  buyerId     String      @map("buyer_id") @db.Uuid
+  buyer       User        @relation(fields: [buyerId], references: [id])
+  quantityKg  Decimal     @map("quantity_kg") @db.Decimal(10, 2)
+  totalAmount Decimal     @map("total_amount") @db.Decimal(12, 2)
+  status      OrderStatus @default(PENDING)
+  createdAt   DateTime    @default(now()) @map("created_at") @db.Timestamptz()
+  updatedAt   DateTime    @updatedAt @map("updated_at") @db.Timestamptz()
+
+  @@map("product_orders")
+}
+
+// -------------------------------------------------------------
+// CONTRACT FARMING
+// -------------------------------------------------------------
+
+model Contract {
+  id                    String         @id @default(uuid()) @db.Uuid
+  buyerId               String         @map("buyer_id") @db.Uuid
+  buyer                 User           @relation("BuyerContracts", fields: [buyerId], references: [id])
+  farmerId              String         @map("farmer_id") @db.Uuid
+  farmer                Farmer         @relation("FarmerContracts", fields: [farmerId], references: [id])
+  cropType              String         @map("crop_type") @db.VarChar(100)
+  requiredQuantityKg    Decimal        @map("required_quantity_kg") @db.Decimal(10, 2)
+  qualitySpecifications String         @map("quality_specifications") @db.Text
+  agreedPricePerKg      Decimal        @map("agreed_price_per_kg") @db.Decimal(10, 2)
+  targetDeliveryDate    DateTime       @map("target_delivery_date") @db.Date
+  status                ContractStatus @default(PROPOSED)
+  createdAt             DateTime       @default(now()) @map("created_at") @db.Timestamptz()
+
+  crops Crop[]
+
+  @@index([buyerId, status], map: "idx_contracts_buyer_status")
+  @@index([farmerId, status], map: "idx_contracts_farmer_status")
+  @@map("contracts")
+}
+
+// -------------------------------------------------------------
+// AGRO SUPPLIERS & INPUT PURCHASES
+// -------------------------------------------------------------
+
+model RawMaterial {
+  id            String   @id @default(uuid()) @db.Uuid
+  supplierId    String   @map("supplier_id") @db.Uuid
+  supplier      Supplier @relation(fields: [supplierId], references: [id], onDelete: Cascade)
+  name          String   @db.VarChar(150)
+  category      String   @db.VarChar(100) // e.g., SEEDS, ORGANIC_FERTILIZER, BIO_PESTICIDE
+  unitPrice     Decimal  @map("unit_price") @db.Decimal(10, 2)
+  stockQuantity Decimal  @map("stock_quantity") @db.Decimal(10, 2)
+  unitOfMeasure String   @map("unit_of_measure") @db.VarChar(20) // e.g., KG, LITER, PACKET
+  createdAt     DateTime @default(now()) @map("created_at") @db.Timestamptz()
+
+  purchases InputPurchase[]
+
+  @@map("raw_materials")
+}
+
+model InputPurchase {
+  id                String      @id @default(uuid()) @db.Uuid
+  rawMaterialId     String      @map("raw_material_id") @db.Uuid
+  rawMaterial       RawMaterial @relation(fields: [rawMaterialId], references: [id])
+  farmerId          String      @map("farmer_id") @db.Uuid
+  farmer            Farmer      @relation(fields: [farmerId], references: [id])
+  quantityPurchased Decimal     @map("quantity_purchased") @db.Decimal(10, 2)
+  totalAmount       Decimal     @map("total_amount") @db.Decimal(12, 2)
+  purchaseDate      DateTime    @default(now()) @map("purchase_date") @db.Timestamptz()
+
+  @@map("input_purchases")
+}
+
+model BuybackOrder {
+  id          String      @id @default(uuid()) @db.Uuid
+  harvestId   String      @map("harvest_id") @db.Uuid
+  harvest     Harvest     @relation(fields: [harvestId], references: [id])
+  supplierId  String      @map("supplier_id") @db.Uuid
+  supplier    Supplier    @relation(fields: [supplierId], references: [id])
+  quantityKg  Decimal     @map("quantity_kg") @db.Decimal(10, 2)
+  agreedPrice Decimal     @map("agreed_price") @db.Decimal(10, 2)
+  status      OrderStatus @default(PENDING)
+  createdAt   DateTime    @default(now()) @map("created_at") @db.Timestamptz()
+
+  @@map("buyback_orders")
+}
+
+// -------------------------------------------------------------
+// GOVERNANCE & AUDIT LOGS
+// -------------------------------------------------------------
+
+model AuditLog {
+  id             String   @id @default(uuid()) @db.Uuid
+  adminId        String   @map("admin_id") @db.Uuid
+  admin          User     @relation(fields: [adminId], references: [id])
+  action         String   @db.VarChar(100)
+  targetEntity   String   @map("target_entity") @db.VarChar(100)
+  targetEntityId String   @map("target_entity_id") @db.Uuid
+  metadata       Json?
+  timestamp      DateTime @default(now()) @db.Timestamptz()
+
+  @@map("audit_logs")
+}

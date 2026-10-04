@@ -6,9 +6,9 @@
 ## Executive Summary
 
 To support the functional and non-functional requirements established in the TraceRoot proposal, the codebase is structured into two completely decoupled root directories:
-1. **`/backend`**: A scalable, modular Node.js/Express.js REST API built with TypeScript, Prisma ORM, and PostgreSQL. It enforces role-based access control, transaction boundaries, and the **append-only immutable ledger** for cultivation provenance.
+1. **`/backend`**: A scalable, modular Node.js/Express.js REST API built with TypeScript, Prisma ORM, and Supabase (Managed PostgreSQL 16). It enforces role-based access control, transaction boundaries, and the **append-only immutable ledger** for cultivation provenance.
 2. **`/frontend`**: Houses the user-facing client applications, logically segregated into:
-   - **`/frontend/mobile`**: A cross-platform **React Native (Expo)** application serving Farmers, Buyers, and Field Suppliers, equipped with native camera-only hardware access and an **offline-first SQLite outbox**.
+   - **`/frontend/mobile`**: A cross-platform **React Native (Expo)** application serving Farmers, Buyers, and Field Suppliers, equipped with native camera-only hardware access and an **offline-first local outbox cache** (synced to the central PostgreSQL database).
    - **`/frontend/admin-web`**: A responsive **React / Next.js** web dashboard for platform administrators to manage KYC user verification, oversee contract disputes, and inspect append-only audit logs.
 
 This decoupled architecture enables independent deployment, strict separation of concerns, and parallel development across all four team members without merge contention.
@@ -23,23 +23,28 @@ The backend follows the **Controller-Service-Repository** pattern and **Clean Ar
 
 ```
 backend/
-├── .env.example                     # Environment variables template
+├── .env.example                     # Environment variables (Supabase DATABASE_URL, DIRECT_URL, SUPABASE_KEY)
 ├── .gitignore                       # Git ignore rules for Node/TypeScript
-├── README.md                        # Backend setup, migration, and run instructions
-├── package.json                     # Dependencies, scripts, and engine specs
+├── README.md                        # Backend setup, Supabase migration, and run instructions
+├── docker-compose.yml               # Local PostgreSQL 16 container service for offline dev fallback
+├── package.json                     # Dependencies, scripts, and engine specs (includes @supabase/supabase-js)
 ├── tsconfig.json                    # TypeScript compiler options
 ├── prisma/
-│   ├── schema.prisma                # Database schema (ERD models & triggers)
-│   ├── migrations/                  # Automated SQL migration history
-│   └── seed.ts                      # Development seed data for testing
+│   ├── schema.prisma                # Prisma schema with Supabase dual-connection (DATABASE_URL + DIRECT_URL)
+│   ├── migrations/                  # Automated PostgreSQL SQL migration history
+│   │   └── 20261004000000_init_postgresql/
+│   │       ├── migration.sql        # Relational tables, foreign keys, and indexes
+│   │       └── triggers.sql         # PL/pgSQL append-only triggers on cultivation_records
+│   └── seed.ts                      # Development seed data for Supabase PostgreSQL testing
 └── src/
     ├── app.ts                       # Express application configuration & middleware
     ├── server.ts                    # Server initialization, port listener & shutdown
     │
     ├── config/                      # Environment and third-party configurations
     │   ├── index.ts                 # Centralized environment config loader
-    │   ├── database.ts              # PrismaClient singleton instance
-    │   ├── s3.config.ts             # AWS S3 / Cloudflare R2 bucket setup
+    │   ├── database.ts              # PrismaClient singleton for Supabase Supavisor connection pool
+    │   ├── supabase.ts              # Supabase Client SDK instance (Storage & Realtime)
+    │   ├── s3.config.ts             # AWS S3 / Cloudflare R2 bucket setup (alternative/fallback)
     │   └── firebase.config.ts       # Firebase Admin SDK (FCM notifications)
     │
     ├── types/                       # Global TypeScript definitions & DTOs
@@ -101,13 +106,28 @@ backend/
 
 | Folder / Layer | Primary Architectural Responsibility | Key Design Pattern |
 | :--- | :--- | :--- |
-| `prisma/` | Defines relational data models, constraints, and custom SQL migrations. Houses PostgreSQL database triggers that block `UPDATE` and `DELETE` on the `cultivation_records` table. | **Data Mapper / ORM** |
-| `src/config/` | Initializes runtime configurations and manages singletons for external connections (PostgreSQL connection pool, S3 client, FCM client). | **Singleton Pattern** |
+| `docker-compose.yml` | Containerizes a local PostgreSQL 16 database instance for offline development fallback and local testing. | **Infrastructure as Code (IaC)** |
+| `prisma/` | Defines PostgreSQL relational models, constraints, GIN indexes, and automated migrations. Configured with Supabase dual-connection URLs (`DATABASE_URL` pooler and `DIRECT_URL` session). Houses PL/pgSQL database triggers blocking `UPDATE`/`DELETE` on `cultivation_records`. | **Data Mapper / ORM** |
+| `src/config/` | Initializes runtime configurations and manages singletons for external connections (PrismaClient Supabase connection pool, Supabase Client SDK for media storage, AWS S3 fallback, Firebase Admin SDK). | **Singleton Pattern** |
 | `src/middlewares/` | Intercepts HTTP requests to enforce stateless security (JWT), role claims (`FARMER`, `BUYER`, `SUPPLIER`, `ADMIN`), payload sanitization, and global exception mapping. | **Intercepting Filter / Pipeline** |
 | `src/routes/` | Declaratively maps URIs to controllers, pairing each route with validation schemas and role guards. | **Front Controller / Routing** |
 | `src/controllers/` | Extracts headers, parameters, and bodies from incoming requests; delegates business processing to domain services; returns standard JSON envelopes. | **Adapter / MVC Controller** |
 | `src/services/` | Contains pure business rules, workflow transitions, and transactional queries. Manages append-only ledger creation and amendment chaining. | **Domain Service / Unit of Work** |
 | `src/utils/` | Provides stateless helpers for image integrity hashing (SHA-256), geo-distance math, and error formatting. | **Utility / Pure Functions** |
+
+### 1.3 Supabase with PostgreSQL Database Integration & File Mapping
+
+TraceRoot utilizes **Supabase** for managed **PostgreSQL 16+** cloud database hosting. This architecture combines cloud-managed high availability with Prisma ORM's compile-time type safety. The following files govern database operations:
+
+| File / Directory | Purpose in Supabase PostgreSQL Architecture |
+| :--- | :--- |
+| `backend/.env.example` | Specifies the dual Supabase connection strings: `DATABASE_URL` (Supavisor transaction pooler on port 6543 with `?pgbouncer=true`) and `DIRECT_URL` (direct TCP session on port 5432 for migrations), plus `SUPABASE_URL` and `SUPABASE_ANON_KEY`. |
+| `backend/prisma/schema.prisma` | Declares `datasource db { provider = "postgresql", url = env("DATABASE_URL"), directUrl = env("DIRECT_URL") }`, entity models (`User`, `Farmer`, `Crop`, `CultivationRecord`, `Contract`, `ProductListing`, `Order`), relational foreign keys, PostgreSQL `@db.Uuid`, `@db.VarChar`, `@db.Decimal`, and `Json` fields. |
+| `backend/prisma/migrations/` | Version-controlled, idempotent PostgreSQL SQL migration scripts applied to Supabase via `prisma migrate dev`. Includes initial DDL tables, indexes, and the `trg_cultivation_append_only` trigger definition. |
+| `backend/prisma/seed.ts` | Populates initial sample data (verified farmers, demo greenhouse produce listings, suppliers, and agricultural raw materials) directly into the Supabase PostgreSQL database for development and testing. |
+| `backend/src/config/database.ts` | Configures the `PrismaClient` singleton with Supabase connection pool management, event logging, and graceful disconnect handlers on process shutdown (`SIGINT`/`SIGTERM`). |
+| `backend/src/config/supabase.ts` | Initializes the official `@supabase/supabase-js` client using the Supabase Service Role Key for managing Supabase Storage buckets (live crop photos, KYC documents) and pre-signed upload URLs. |
+| `backend/docker-compose.yml` | Provides an optional local `postgres:16-alpine` container for developers working offline without active internet connectivity to the Supabase Cloud. |
 
 ---
 
@@ -208,7 +228,7 @@ frontend/mobile/
     │       └── FarmerAuditScreen.tsx
     │
     ├── services/                    # Native Device & Hardware Services
-    │   ├── offlineStorage.ts        # Local SQLite database manager
+    │   ├── offlineStorage.ts        # Local offline cache & queue manager (AsyncStorage / MMKV)
     │   ├── syncQueue.service.ts     # Offline Outbox queue & sync manager
     │   ├── camera.service.ts        # Native camera sensor adapter
     │   ├── location.service.ts      # Native GPS coordinate acquisition
@@ -319,10 +339,12 @@ To ensure seamless coordination among the four project members (as specified in 
    Separates query composition and persistence from business rules and HTTP transport.
 3. **Intercepting Filter Pattern (`backend/src/middlewares/`)**:
    Uniformly executes authentication, role checks, and input sanitization before controllers are reached.
+4. **Dual-URL Connection Pooling Pattern (`backend/prisma/schema.prisma` & `backend/src/config/database.ts`)**:
+   Express backend routes queries through the Supabase Supavisor transaction pooler (`DATABASE_URL`, port 6543), while schema migration and DDL locks execute through the direct session connection (`DIRECT_URL`, port 5432), preventing connection exhaustion under high mobile load.
 
 ### 4.2 Frontend Mobile
 1. **Offline Outbox Pattern (`frontend/mobile/src/services/syncQueue.service.ts`)**:
-   Cultivation events are persisted into a local SQLite queue immediately. A background worker monitors connectivity via `@react-native-community/netinfo` and replicates entries idempotently to the backend.
+   Cultivation events are persisted into a local offline outbox queue immediately (using AsyncStorage / MMKV). A background worker monitors connectivity via `@react-native-community/netinfo` and replicates entries idempotently to the central PostgreSQL database.
 2. **Hardware Adapter Pattern (`frontend/mobile/src/services/camera.service.ts`)**:
    Abstracts native device camera hardware, strictly prohibiting calls to the device gallery to guarantee evidence freshness.
 3. **Role-Driven Navigation Pattern (`frontend/mobile/src/navigation/RootNavigator.tsx`)**:
