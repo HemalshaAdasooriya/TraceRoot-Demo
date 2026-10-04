@@ -7,9 +7,7 @@
 
 To support the functional and non-functional requirements established in the TraceRoot proposal, the codebase is structured into two completely decoupled root directories:
 1. **`/backend`**: A scalable, modular Node.js/Express.js REST API built with modern **JavaScript (ES Modules)**, Prisma ORM, and Supabase (Managed PostgreSQL 16). It enforces role-based access control, transaction boundaries, and the **append-only immutable ledger** for cultivation provenance.
-2. **`/frontend`**: Houses the user-facing client applications, logically segregated into:
-   - **`/frontend/mobile`**: A cross-platform **React Native (Expo)** JavaScript application serving Farmers, Buyers, and Field Suppliers, equipped with native camera-only hardware access and an **offline-first local outbox cache** (synced to the central PostgreSQL database).
-   - **`/frontend/admin-web`**: A responsive **React / Next.js** JavaScript web dashboard for platform administrators to manage KYC user verification, oversee contract disputes, and inspect append-only audit logs.
+2. **`/frontend/mobile`**: A unified, cross-platform **React Native (Expo)** JavaScript application serving all four stakeholders: **Farmers**, **Institutional Buyers**, **Agro Suppliers**, and **Platform Administrators**. It features native camera-only hardware access, an **offline-first local outbox cache** (synced to Supabase PostgreSQL), and role-based navigation. Platform operations are complemented by the cloud-native Supabase Studio dashboard.
 
 This decoupled architecture enables independent deployment, strict separation of concerns, and parallel development across all four team members without merge contention.
 
@@ -136,21 +134,9 @@ TraceRoot utilizes **Supabase** for managed **PostgreSQL 16+** cloud database ho
 
 ---
 
-## 2. Frontend File Structure (`/frontend`)
+## 2. Frontend File Structure (`/frontend/mobile`)
 
-TraceRoot requires a multi-client frontend strategy:
-1. **`frontend/mobile/`**: The primary operational tool for Farmers, Buyers, and Agricultural Suppliers.
-2. **`frontend/admin-web/`**: The desktop-focused operational and governance console for System Administrators.
-
-```
-frontend/
-├── mobile/       # React Native / Expo cross-platform mobile application
-└── admin-web/    # Next.js / React web dashboard for platform administrators
-```
-
----
-
-### 2.1 Mobile Application (`/frontend/mobile`)
+TraceRoot unifies all client interactions into a single cross-platform **React Native (Expo)** mobile codebase. Rather than maintaining a separate web dashboard, administrative governance (KYC approvals, dispute resolution, audit verification) is integrated directly into the mobile client via role-guarded screens, complemented by the built-in **Supabase Studio** cloud console for direct database oversight.
 
 The mobile client is engineered with an **Offline-First** posture to withstand rural network drops. It features native hardware camera integration that omits gallery image selection to prevent photo tampering.
 
@@ -199,7 +185,8 @@ frontend/mobile/
     │   ├── AuthNavigator.jsx        # Login, Register, Role Selection stack
     │   ├── FarmerNavigator.jsx      # Bottom tab: Dashboard, Crops, Orders, Chat
     │   ├── BuyerNavigator.jsx       # Bottom tab: Market, Contracts, Orders, Profile
-    │   └── SupplierNavigator.jsx    # Bottom tab: Catalog, Buyback, Audits, Profile
+    │   ├── SupplierNavigator.jsx    # Bottom tab: Catalog, Buyback, Audits, Profile
+    │   └── AdminNavigator.jsx       # Bottom tab: Verification, Audits, Disputes, Profile
     │
     ├── screens/                     # Application Screens by Role (JSX)
     │   ├── auth/                    # Shared Authentication Screens
@@ -226,11 +213,17 @@ frontend/mobile/
     │   │   ├── ContractTrackingScreen.jsx
     │   │   └── BuyerOrdersScreen.jsx
     │   │
-    │   └── supplier/                # Supplier Module Screens
-    │       ├── CatalogScreen.jsx
-    │       ├── AddMaterialScreen.jsx
-    │       ├── BuybackRequestsScreen.jsx
-    │       └── FarmerAuditScreen.jsx
+    │   ├── supplier/                # Supplier Module Screens
+    │   │   ├── CatalogScreen.jsx
+    │   │   ├── AddMaterialScreen.jsx
+    │   │   ├── BuybackRequestsScreen.jsx
+    │   │   └── FarmerAuditScreen.jsx
+    │   │
+    │   └── admin/                   # Admin Governance Module Screens
+    │       ├── AdminDashboardScreen.jsx     # High-level platform KPIs & metrics
+    │       ├── FarmerVerificationScreen.jsx # KYC deed & document approval queue
+    │       ├── DisputeReviewScreen.jsx      # Contract dispute arbitration & notes
+    │       └── AuditLedgerScreen.jsx        # Append-only cultivation log inspector
     │
     ├── services/                    # Native Device & Hardware Services
     │   ├── offlineStorage.js        # Local offline cache & queue manager (AsyncStorage / MMKV)
@@ -257,85 +250,19 @@ frontend/mobile/
 
 ---
 
-### 2.2 Admin Web Dashboard (`/frontend/admin-web`)
-
-The administrative portal allows platform supervisors to verify newly registered farmers and agro-suppliers, monitor market activities, resolve contract disputes, and review the append-only audit trail.
-
-```
-frontend/admin-web/
-├── .env.example                     # Web portal environment variables
-├── .gitignore                       # Git ignore rules for Next.js / React
-├── README.md                        # Web dashboard setup and run instructions
-├── jsconfig.json                    # JavaScript ES Modules path mapping for Next.js
-├── package.json                     # Web dependencies and build scripts
-├── tailwind.config.js               # Tailwind CSS design system tokens
-├── postcss.config.js                # PostCSS configuration
-│
-├── public/                          # Public static assets & branding
-│   └── favicon.ico
-│
-└── src/
-    ├── app/                         # Next.js App Router (JavaScript / JSX)
-    │   ├── layout.jsx               # Root layout with sidebar and header
-    │   ├── page.jsx                 # Default redirect to dashboard
-    │   ├── login/
-    │   │   └── page.jsx             # Admin authentication screen
-    │   ├── dashboard/
-    │   │   └── page.jsx             # High-level platform KPIs & statistics
-    │   ├── verifications/
-    │   │   └── page.jsx             # Farmer & Supplier KYC approval queue
-    │   ├── contracts/
-    │   │   └── page.jsx             # Active contract monitoring & dispute view
-    │   ├── audit-ledger/
-    │   │   └── page.jsx             # Append-only cultivation log inspector
-    │   └── reports/
-    │       └── page.jsx             # Operational reports & CSV data export
-    │
-    ├── components/                  # Admin UI Component Library (JSX)
-    │   ├── layout/
-    │   │   ├── AdminSidebar.jsx     # Navigation sidebar
-    │   │   ├── AdminHeader.jsx      # Top bar with admin profile & alerts
-    │   │   └── StatCard.jsx         # Metric summary card
-    │   ├── tables/
-    │   │   ├── DataTable.jsx        # Paginated, sortable data table
-    │   │   └── ActionDropdown.jsx   # Row actions (Verify, Reject, View)
-    │   ├── modals/
-    │   │   ├── KycReviewModal.jsx   # Inspect submitted farmer deeds / licenses
-    │   │   └── DisputeModal.jsx     # Review evidence & log dispute verdict
-    │   └── common/
-    │       ├── StatusBadge.jsx
-    │       └── ExportButton.jsx
-    │
-    ├── api/                         # Admin API Client (Axios / Fetch)
-    │   ├── adminClient.js           # Configured HTTP client with bearer tokens
-    │   ├── verifications.api.js     # KYC approval & rejection requests
-    │   ├── audits.api.js            # Query tamper-resistant ledger logs
-    │   └── reports.api.js           # Fetch analytics & aggregated metrics
-    │
-    └── utils/                       # Web helpers
-        ├── exportToCsv.js           # CSV export generator
-        └── dateUtil.js              # Localized date formatters
-```
-
----
-
-## 3. Team Member Module Ownership Mapping
-
-To ensure seamless coordination among the four project members (as specified in Table 1 of the Project Proposal), development responsibilities are cleanly decoupled across the directory tree:
-
 | Team Member | Registration | Assigned Module | Backend Directories Owned | Frontend Directories Owned |
 | :--- | :--- | :--- | :--- | :--- |
 | **K.G.T.R. Karunajeewa** | `22CSE0377` | **Farmer & Cultivation History** | `src/controllers/farmer.controller.js`<br/>`src/controllers/cultivation.controller.js`<br/>`src/services/cultivation.service.js`<br/>`src/services/integrity.service.js`<br/>`src/routes/cultivation.routes.js` | `frontend/mobile/src/screens/farmer/`<br/>`frontend/mobile/src/components/camera/`<br/>`frontend/mobile/src/components/timeline/`<br/>`frontend/mobile/src/services/camera.service.js`<br/>`frontend/mobile/src/services/location.service.js` |
 | **A.M.H.B. Adasooriya** | `22CSE0365` | **Buyer & Supplier Module** | `src/controllers/marketplace.controller.js`<br/>`src/controllers/supplier.controller.js`<br/>`src/services/marketplace.service.js`<br/>`src/services/supplier.service.js`<br/>`src/routes/marketplace.routes.js`<br/>`src/routes/supplier.routes.js` | `frontend/mobile/src/screens/buyer/MarketplaceScreen.jsx`<br/>`frontend/mobile/src/screens/buyer/ProduceDetailScreen.jsx`<br/>`frontend/mobile/src/screens/supplier/`<br/>`frontend/mobile/src/navigation/BuyerNavigator.jsx`<br/>`frontend/mobile/src/navigation/SupplierNavigator.jsx` |
 | **W.M.V. Chamith** | `22CSE0384` | **Contract Farming & Farmer Module** | `src/controllers/contract.controller.js`<br/>`src/services/contract.service.js`<br/>`src/routes/contract.routes.js`<br/>`src/validators/contract.validator.js` | `frontend/mobile/src/screens/buyer/ContractInitiateScreen.jsx`<br/>`frontend/mobile/src/screens/buyer/ContractTrackingScreen.jsx`<br/>`frontend/mobile/src/screens/farmer/FarmerContractsScreen.jsx`<br/>`frontend/mobile/src/services/offlineSync.service.js` |
-| **M A.F. Nuha** | `22CSE0397` | **Admin Module & Buyer Module** | `src/controllers/admin.controller.js`<br/>`src/services/admin.service.js`<br/>`src/routes/admin.routes.js`<br/>`src/controllers/auth.controller.js`<br/>`src/services/auth.service.js` | `frontend/admin-web/src/app/`<br/>`frontend/admin-web/src/components/`<br/>`frontend/admin-web/src/api/`<br/>`frontend/mobile/src/screens/buyer/BuyerOrdersScreen.jsx` |
+| **M A.F. Nuha** | `22CSE0397` | **Admin Module & Buyer Module** | `src/controllers/admin.controller.js`<br/>`src/services/admin.service.js`<br/>`src/routes/admin.routes.js`<br/>`src/controllers/auth.controller.js`<br/>`src/services/auth.service.js` | `frontend/mobile/src/screens/admin/`<br/>`frontend/mobile/src/navigation/AdminNavigator.jsx`<br/>`frontend/mobile/src/screens/buyer/BuyerOrdersScreen.jsx` |
 
 ---
 
 ## 4. Key Architectural Design Patterns by Directory
 
 ### 4.1 Backend
-1. **Append-Only Event Store Pattern (`backend/src/services/cultivation.service.ts` & `backend/prisma/schema.prisma`)**:
+1. **Append-Only Event Store Pattern (`backend/src/services/cultivation.service.js` & `backend/prisma/schema.prisma`)**:
    Cultivation logs are write-once. Updates and deletes are blocked at the database trigger level. Corrections trigger linked records in `cultivation_amendments`.
 2. **Repository & Service Pattern (`backend/src/services/` & `backend/src/controllers/`)**:
    Separates query composition and persistence from business rules and HTTP transport.
@@ -347,15 +274,9 @@ To ensure seamless coordination among the four project members (as specified in 
    The entire backend executes natively on Node.js using modern ECMAScript standard modules (`"type": "module"`, `import`/`export`). Eliminates compilation build steps, source-map debugging delays, and transpile latency, accelerating student feature delivery while maintaining strict runtime validation via Zod schemas.
 
 ### 4.2 Frontend Mobile
-1. **Offline Outbox Pattern (`frontend/mobile/src/services/syncQueue.service.ts`)**:
+1. **Offline Outbox Pattern (`frontend/mobile/src/services/syncQueue.service.js`)**:
    Cultivation events are persisted into a local offline outbox queue immediately (using AsyncStorage / MMKV). A background worker monitors connectivity via `@react-native-community/netinfo` and replicates entries idempotently to the central PostgreSQL database.
-2. **Hardware Adapter Pattern (`frontend/mobile/src/services/camera.service.ts`)**:
+2. **Hardware Adapter Pattern (`frontend/mobile/src/services/camera.service.js`)**:
    Abstracts native device camera hardware, strictly prohibiting calls to the device gallery to guarantee evidence freshness.
-3. **Role-Driven Navigation Pattern (`frontend/mobile/src/navigation/RootNavigator.tsx`)**:
-   Dynamically swaps the navigation stack depending on whether the authenticated user is a `FARMER`, `BUYER`, or `SUPPLIER`.
-
-### 4.3 Frontend Admin Web
-1. **Facade Pattern (`frontend/admin-web/src/api/adminClient.ts`)**:
-   Provides simplified methods that aggregate user accounts, verification documents, and audit logs into high-level dashboard views.
-2. **Component Composition (`frontend/admin-web/src/components/`)**:
-   Reuses accessible atomic UI widgets across verification, dispute handling, and compliance screens.
+3. **Role-Driven Navigation Pattern (`frontend/mobile/src/navigation/RootNavigator.jsx`)**:
+   Dynamically swaps the navigation stack depending on whether the authenticated user is a `FARMER`, `BUYER`, `SUPPLIER`, or `ADMIN`. Platform operators can review KYC submissions and monitor ledger integrity directly from the mobile app without requiring a separate web client.

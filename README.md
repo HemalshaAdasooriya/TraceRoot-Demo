@@ -7,8 +7,7 @@ TraceRoot is a mobile-first digital agriculture platform connecting Farmers, Agr
 - **Database & Hosting**: Supabase (Managed PostgreSQL 16, Supavisor Connection Pooling, PostGIS)
 - **Backend API**: Node.js / Express.js (JavaScript ES Modules `"type": "module"`), Prisma ORM (Dual-URL Pooling), Zod, Argon2id, JWT
 - **Media & Evidence**: Supabase Storage / S3 (Live-captured crop photos with SHA-256 verification)
-- **Mobile Client**: React Native / Expo (JavaScript / JSX) with live camera-only capture and offline outbox
-- **Admin Dashboard**: Next.js 14+ (App Router, JavaScript / JSX), React, Tailwind CSS
+- **Mobile Client**: React Native / Expo (JavaScript / JSX) with live camera-only capture, role-based navigation (Farmers, Buyers, Suppliers, Admins), and offline outbox
 
 ## 📚 Technical Documentation & Architecture
 - 📐 [System Architecture (SYSTEM_ARCHITECTURE.md)](./SYSTEM_ARCHITECTURE.md) - High-level & sequence Mermaid diagrams, component breakdown, technology justifications, Supabase cloud pooling, and append-only database triggers.

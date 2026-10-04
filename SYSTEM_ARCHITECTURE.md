@@ -15,8 +15,9 @@ TraceRoot adopts a **Modular Layered Architecture** (Clean Architecture principl
 +-------------------------------------------------------------------------------+
 |                             TraceRoot Architecture                            |
 |                                                                               |
-|  [ Mobile Client: React Native ]       [ Admin Web Portal: Next.js / React ]  |
-|         (Offline Outbox)                                                      |
+|                   [ Cross-Platform Mobile Client: React Native ]              |
+|            (Farmers | Buyers | Agro Suppliers | Platform Admins)              |
+|                              (Offline Outbox)                                 |
 +---------------------------------------+---------------------------------------+
                                         | HTTPS / TLS 1.3 + JWT
 +---------------------------------------v---------------------------------------+
@@ -57,10 +58,10 @@ TraceRoot adopts a **Modular Layered Architecture** (Clean Architecture principl
 graph TB
     subgraph Presentation_Layer["Presentation Layer (Client Tier)"]
         direction TB
-        FarmerApp["Farmer Mobile App<br/>(React Native / Android)<br/>- Live Camera Enforcer<br/>- Offline Local Cache & Outbox"]
-        BuyerApp["Buyer Mobile App<br/>(React Native / Cross-Platform)<br/>- Farming-Type Filter<br/>- Provenance Viewer"]
+        FarmerApp["Farmer Mobile View<br/>(React Native / Android)<br/>- Live Camera Enforcer<br/>- Offline Local Cache & Outbox"]
+        BuyerApp["Buyer Mobile View<br/>(React Native / Cross-Platform)<br/>- Farming-Type Filter<br/>- Provenance Viewer"]
         SupplierApp["Supplier Mobile View<br/>(React Native)<br/>- Input Catalog<br/>- Buyback Pipeline"]
-        AdminWeb["Admin Web Dashboard<br/>(React / Next.js Web)<br/>- Verification & KYC<br/>- System Audit & Reports"]
+        AdminApp["Admin Mobile View<br/>(React Native RBAC Stack)<br/>- KYC & Verification<br/>- Audit Ledger & Disputes"]
     end
 
     subgraph Security_Gateway["API Gateway & Ingress Layer"]
@@ -101,7 +102,7 @@ graph TB
     FarmerApp -->|REST API over HTTPS| Gateway
     BuyerApp -->|REST API over HTTPS| Gateway
     SupplierApp -->|REST API over HTTPS| Gateway
-    AdminWeb -->|REST API over HTTPS| Gateway
+    AdminApp -->|REST API over HTTPS| Gateway
 
     %% Gateway to Security & Services
     Gateway --> AuthFilter
@@ -146,29 +147,19 @@ graph TB
 ## 3. Component Breakdown
 
 ### 3.1 Mobile Client Application (`TraceRoot Mobile`)
-- **Responsibility**: Provides the cross-platform mobile user interface for Farmers, Buyers, and Agricultural Suppliers.
+- **Responsibility**: Provides the cross-platform mobile user interface for all four stakeholders: Farmers, Buyers, Agricultural Suppliers, and Platform Administrators.
   - **Farmer Module**: Farm profile setup (greenhouse vs. open-field), input procurement from agro-companies, structured stage-based cultivation data logging, live tamper-resistant photo capture, harvest listing generation, contract acceptance, and messaging.
   - **Buyer Module**: Category search and filtering (greenhouse / normal), cultivation transparency inspector, direct order placement, buyer notes, and contract farming negotiations.
   - **Supplier Module**: Catalog management, price and inventory updating, and harvest buyback fulfillment.
+  - **Admin Module**: In-app mobile governance console for platform operators: KYC document inspection (deeds, business licenses), verification approvals/rejections, immutable ledger audit inspection, and dispute oversight. (Complemented by the built-in Supabase Studio cloud console for direct database administration).
 - **Key Client-Side Subcomponents**:
   - `LiveCameraCaptureModule`: Directly binds to hardware camera; blocks gallery picker; extracts native GPS coordinates and hardware timestamp.
   - `OfflineSyncManager`: Maintains a persistent local outbox queue and offline cache (AsyncStorage / MMKV) with exponential backoff and network status listeners (`@react-native-community/netinfo`).
-  - `RoleBasedUIController`: Dynamically configures screens, navigation stacks, and actions according to user role permissions.
+  - `RoleBasedUIController`: Dynamically configures screens, navigation stacks, and actions according to user role permissions (`FARMER`, `BUYER`, `SUPPLIER`, `ADMIN`).
 - **Design Patterns**: 
   - **Offline Outbox Pattern**: Queues offline mutations in local storage; executes idempotent replays when connection is active.
   - **Adapter Pattern**: Wraps native device hardware sensors (Camera, Geolocation) into consistent JavaScript service interfaces.
-
-### 3.2 Web Admin Dashboard (`TraceRoot Admin`)
-- **Responsibility**: Administrative management portal for platform operators.
-  - Verification and approval/rejection of Farmer registrations, farm ownership credentials, and Agricultural Supplier business licenses.
-  - System-wide transaction monitoring, fraud detection, and contract dispute oversight.
-  - Aggregated reporting on harvest outputs, input utilization, and platform activity.
-- **Key Subcomponents**:
-  - `VerificationConsole`: Review uploaded registration documents, GPS farm plots, and certification proofs.
-  - `AuditLogViewer`: Inspect append-only ledger entries and flagged discrepancies.
-  - `ReportingEngine`: Generate system export files (CSV, PDF) and platform operational metrics.
-- **Design Patterns**:
-  - **Facade Pattern**: Consolidates complex multi-service administration data queries into unified dashboard views.
+  - **Role-Driven Navigation Pattern**: Mounts role-specific navigation stacks dynamically upon authentication.
 
 ### 3.3 API Gateway & Security Ingress Layer
 - **Responsibility**: Central entry point for all client requests; handles authentication, TLS termination, protocol compliance, rate limiting, and request routing.
@@ -257,8 +248,7 @@ graph TB
 | :--- | :--- | :--- | :--- |
 | **Mobile Client** | **React Native (with Expo bare workflow)** | React Native 0.74+ / Expo SDK 51+ | Single, maintainable cross-platform codebase (Android & iOS). Native access to camera and GPS hardware modules. Extensive open-source ecosystem ideal for agile student engineering teams. |
 | **Local Offline Storage & Outbox** | **AsyncStorage / MMKV** | MMKV v2+ / React Native AsyncStorage | Ultra-fast, zero-overhead key-value client storage for queuing pending offline stage entries and caching recent queries before syncing to the cloud PostgreSQL database. |
-| **Admin Web Portal** | **Next.js (App Router) & React (JavaScript)** | React 18+ / Next.js 14+ | Server-side rendering (SSR) for fast dashboard initial load, modular component architecture, responsive desktop grid layouts, and seamless integration with REST APIs. |
-| **UI Components (Web)** | **Tailwind CSS & Shadcn UI** | Tailwind v3.4+ / Radix Primitives | Clean, accessible, modern UI component primitives allowing rapid development of data tables, modals, and verification cards. |
+| **Mobile UI Components** | **React Native Paper / Native Elements** | React Native Paper v5+ | Clean, accessible, modern mobile UI component primitives allowing rapid development of data cards, modals, verification queues, and filter chips on mobile. |
 | **Backend Runtime & Framework** | **Node.js with Express.js (JavaScript ES Modules)** | Node.js 20 LTS, ES2023+ (ESM) | High-performance asynchronous non-blocking event-driven runtime using native ECMAScript Modules (`"type": "module"`, `import`/`export`). Eliminates build/compilation steps for rapid team iterations, coupled with Zod schema validation for strict runtime request parsing. |
 | **Relational Database & Cloud Hosting** | **Supabase (Managed PostgreSQL 16)** | PostgreSQL 16+ / Supabase Cloud Platform | Managed cloud PostgreSQL infrastructure with automated zero-downtime scaling, Supavisor connection pooling for high-concurrency mobile I/O, point-in-time recovery (PITR), native `JSONB` for agronomic inputs, `PostGIS` spatial extension for farm geo-fencing, and PL/pgSQL database triggers for append-only audit integrity. |
 | **Database ORM & Migration Engine** | **Prisma ORM (with Supabase Dual-URL Pooling)** | Prisma 5.x | Relational client with declarative schema migrations and rich IDE autocomplete in JavaScript. Leverages Supabase's dual-connection model: pooled connection (`DATABASE_URL` via Supavisor port 6543) for runtime API traffic and direct connection (`DIRECT_URL` port 5432) for deterministic schema migrations (`prisma migrate dev`). |
@@ -658,7 +648,7 @@ Because cultivation entries are strictly **append-only timestamped events**, con
 | **Phase 2** | Foundation & Core Services | Supabase Project Setup, PostgreSQL 16 Schema Setup, Prisma ORM (Dual-URL Pooling), Auth Service with JWT/Argon2id, API Gateway. | Weeks 3 - 4 |
 | **Phase 3** | Farmer & Cultivation Ledger | React Native Camera integration (no gallery), offline outbox queue, PostgreSQL append-only trigger enforcement, stage data entry. | Weeks 5 - 8 |
 | **Phase 4** | Buyer Marketplace & Supplier Engine | Marketplace search & filter (Greenhouse vs. Open-field), provenance viewer, supplier catalog & buyback flow, contract farming state machine. | Weeks 9 - 10 |
-| **Phase 5** | Admin Dashboard & Integration | Next.js admin verification dashboard, FCM push notification service, end-to-end integration across all 4 roles. | Weeks 11 - 12 |
+| **Phase 5** | Admin Module & Integration | Mobile Admin verification module, Supabase Studio governance setup, FCM push notification service, end-to-end integration across all 4 roles. | Weeks 11 - 12 |
 | **Phase 6** | Quality Assurance & Field Testing | Unit/Integration testing, physical Android device field testing in low-connectivity areas, security audits. | Weeks 13 - 14 |
 | **Phase 7** | Final Deployment & Viva | Production deployment (Render/AWS), user manuals, demonstration dataset, and project presentation. | Week 15 |
 
