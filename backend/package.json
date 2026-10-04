@@ -2,16 +2,15 @@
   "name": "traceroot-backend",
   "version": "1.0.0",
   "description": "TraceRoot REST API Server - Farm-to-Buyer Agricultural Contact and Transparency System",
-  "main": "dist/server.js",
+  "type": "module",
+  "main": "src/server.js",
   "scripts": {
-    "dev": "tsx watch src/server.ts",
-    "build": "tsc",
-    "start": "node dist/server.js",
+    "dev": "node --watch src/server.js",
+    "start": "node src/server.js",
     "prisma:generate": "prisma generate",
     "prisma:migrate": "prisma migrate dev",
     "prisma:studio": "prisma studio",
-    "lint": "eslint src/**/*.ts",
-    "test": "jest"
+    "lint": "eslint src/**/*.js"
   },
   "dependencies": {
     "@prisma/client": "^5.19.0",
@@ -27,14 +26,8 @@
     "zod": "^3.23.8"
   },
   "devDependencies": {
-    "@types/cors": "^2.8.17",
-    "@types/express": "^4.17.21",
-    "@types/jsonwebtoken": "^9.0.6",
-    "@types/morgan": "^1.9.9",
-    "@types/node": "^20.14.9",
-    "prisma": "^5.19.0",
-    "tsx": "^4.19.0",
-    "typescript": "^5.5.2"
+    "nodemon": "^3.1.4",
+    "prisma": "^5.19.0"
   },
   "keywords": [
     "agriculture",
@@ -42,7 +35,10 @@
     "contract-farming",
     "append-only",
     "express",
+    "javascript",
+    "es-modules",
     "prisma",
+    "supabase",
     "postgresql"
   ],
   "author": "TraceRoot Team",

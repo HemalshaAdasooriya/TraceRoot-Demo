@@ -11,7 +11,7 @@ if (!supabaseUrl && process.env.NODE_ENV === 'production') {
 }
 
 /**
- * Supabase Admin Client (using service role key for trusted backend operations)
+ * Supabase Admin Client (ES Modules)
  * Used for Storage bucket management, pre-signed upload URLs, and direct Supabase services.
  */
 export const supabase = createClient(supabaseUrl, supabaseServiceRoleKey, {
